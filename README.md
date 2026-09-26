@@ -1,136 +1,111 @@
-# CNN do dado ao deploy — Caminho C (Serviço completo)
+# Classificador de Roupas com CNN: do dado ao deploy
 
-> Desafio final da disciplina **Artificial Intelligence e Deep Learning Aplicada** (FIAP).
-> Baseado no material do Prof. Dr. Alexandre Miguel de Carvalho
-> ([carvalhoamc/fiap](https://github.com/carvalhoamc/fiap), pasta `2tsCPV-2/cnn`).
+Rede neural convolucional em **PyTorch** que classifica peças de roupa (Fashion-MNIST, 10 classes) com **90,1% de acurácia no teste**, servida como **API REST (FastAPI) em Docker**, com endpoint de lote, métricas de uso e log de predições de baixa confiança.
 
-**Grupo:** Bruno Tomin (RM565037) e Cynthia Takematu (RM564100)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
 
-## O que este projeto faz
-
-Classifica imagens de peças de roupa (Fashion-MNIST, 10 classes) com uma CNN
-em PyTorch e serve o modelo como uma API REST em contêiner Docker. Sobre a
-API original da disciplina, implementamos as quatro extensões do **Caminho C**:
-
-1. **`POST /prever_lote`** — classifica várias imagens em uma única requisição
-   (um só *forward* em lote, limite de 32 imagens);
-2. **Log de baixa confiança** — toda predição com confiança < 0,5 é registrada
-   em `logs/baixa_confianca.jsonl` (insumo para rotulagem e retreino);
-3. **`GET /metricas`** — requisições por endpoint, total de predições, taxa de
-   baixa confiança e latência média desde o startup;
-4. **Docker** — imagem de produção mínima (282 MB comprimida) com HEALTHCHECK.
+> Desafio final (Caminho C) da disciplina **Artificial Intelligence e Deep Learning Aplicada** da FIAP.
+> Trabalho em dupla, desenvolvido sobre o material do Prof. Dr. Alexandre Miguel de Carvalho ([carvalhoamc/fiap](https://github.com/carvalhoamc/fiap)).
 
 ## Resultados
 
 | Métrica | Valor |
 |---|---|
 | Acurácia de validação (12 épocas, CPU) | 91,00% |
-| Acurácia de teste | 90,13% |
+| **Acurácia de teste** | **90,13%** |
 | Classe mais difícil | Camisa (F1 = 0,68; revocação 60,6%) |
-| Modelo exportado (TorchScript) | 390 KB (dif. máx. 1,43e-06) |
-| Teste de integração da API | 20/20 (100%), ~0,8 ms/imagem |
-| Lote de 8 imagens | 8,19 ms (1,02 ms/imagem) |
-| Imagem Docker | 282 MB comprimida (1,34 GB em disco) |
+| Classes mais fáceis | Calça (F1 = 0,99), Bolsa (0,98), Sandália (0,97) |
+| Modelo exportado (TorchScript) | 390 KB |
+| Teste de integração da API | 20/20 acertos, ~0,8 ms por imagem |
+| Imagem Docker | 282 MB comprimida |
 
-Achado interessante: ruído aleatório puro é classificado como "Bolsa" com
-69–81% de confiança, e uma imagem cinza uniforme com 94,6% — evidência da
-superconfiança do softmax em entradas fora do domínio. A discussão completa
-está no relatório (`relatorio/`).
+<p align="center">
+  <img src="outputs/curvas_treino.png" width="48%" alt="Curvas de treino e validação">
+  <img src="outputs/matriz_confusao.png" width="48%" alt="Matriz de confusão no teste">
+</p>
+
+## Análise dos erros
+
+- **Confusão concentrada nas peças de parte de cima.** Camisa, camiseta, pulôver e casaco formam um bloco denso na matriz de confusão: 176 camisas do teste foram classificadas como camiseta. Em 28×28 pixels em escala de cinza, essas peças diferem em detalhes (gola, botões) que quase desaparecem.
+- **Superconfiança fora do domínio.** Ruído aleatório é classificado como "Bolsa" com 69–81% de confiança, e uma imagem cinza uniforme com 94,6%. A confiança do softmax sozinha não basta para detectar entradas estranhas. Por isso a API registra toda predição abaixo de 50% para revisão.
+- **Deslocamento de domínio.** Fotos reais (peça escura em fundo claro) precisam da opção "inverter cores" e ainda assim podem errar, porque o modelo só viu peças claras sobre fundo escuro.
+
+## O que foi construído
+
+**Modelo:** CNN com 3 blocos convolucionais (16 → 32 → 64 filtros) + camada densa de 128 neurônios, dropout, *early stopping* e checkpoint pelo melhor resultado de validação. O conjunto de teste foi usado uma única vez, ao final.
+
+**API** ([`deploy/api.py`](deploy/api.py)). As extensões do Caminho C são autoria da dupla:
+
+| Endpoint | Descrição |
+|---|---|
+| `GET /` | Página web de teste com upload múltiplo |
+| `GET /saude` | Health check, usado pelo `HEALTHCHECK` do Docker |
+| `POST /prever` | Classifica uma imagem e retorna classe, confiança e top-3 |
+| `POST /prever_lote` | **(extensão)** Classifica até 32 imagens em um único *forward*; arquivos inválidos não derrubam o lote |
+| `GET /metricas` | **(extensão)** Requisições por endpoint, total de predições, taxa de baixa confiança e latência média |
+
+**Log de baixa confiança (extensão):** predições com confiança < 0,5 são gravadas em [`logs/baixa_confianca.jsonl`](logs/baixa_confianca.jsonl), insumo para rotulagem manual e retreino.
+
+**Docker (extensão):** imagem enxuta `python:3.12-slim` com PyTorch CPU e health check.
+
+## Como executar
+
+### Opção A: pipeline completo no Google Colab (~25 min)
+
+Abra [`CP1_AI_Deep_Learning_Caminho_C.ipynb`](CP1_AI_Deep_Learning_Caminho_C.ipynb) no [Colab](https://colab.research.google.com) e execute as células em ordem. O notebook clona o repositório da disciplina, treina, avalia, exporta o modelo, sobe a API e testa todos os endpoints. A semente fixa (42) torna o treino reprodutível.
+
+### Opção B: somente a API, com Docker
+
+```bash
+git clone https://github.com/cynthiatakematu/fiap-cp01-ai-deep-learning.git
+cd fiap-cp01-ai-deep-learning
+
+docker build -t cnn-roupas -f deploy/Dockerfile .
+docker run -p 8000:8000 -v "$(pwd)/logs:/app/logs" -e DIR_LOGS=/app/logs cnn-roupas
+```
+
+Acesse http://localhost:8000 (página de teste) ou http://localhost:8000/docs (Swagger). Para testar pela linha de comando:
+
+```bash
+curl http://localhost:8000/saude
+curl -X POST http://localhost:8000/prever_lote \
+  -F "arquivos=@amostras/amostra_000_Ankle boot.png" \
+  -F "arquivos=@amostras/amostra_001_Pullover.png"
+curl http://localhost:8000/metricas
+```
+
+> No Windows (PowerShell), use `curl.exe` e `"${PWD}"` no lugar de `"$(pwd)"`.
+
+### Opção C: somente a API, sem Docker
+
+```bash
+pip install -r requirements.txt
+python -m uvicorn deploy.api:app --port 8000
+```
 
 ## Estrutura do repositório
 
-```
-.
-├── README.md
-├── CP1_AI___Deep_Learning_Caminho_C.ipynb   <- notebook executado (Colab)
+```text
+├── CP1_AI_Deep_Learning_Caminho_C.ipynb  notebook executado (treino → avaliação → API)
 ├── deploy/
-│   ├── api.py                       <- API estendida (Caminho C)
-│   ├── testar_api.py                <- teste de integração (da disciplina)
-│   └── Dockerfile                   <- imagem de produção
+│   ├── api.py               API FastAPI estendida
+│   ├── testar_api.py        teste de integração da disciplina (depende do repositório do professor)
+│   └── Dockerfile
 ├── outputs/
-│   ├── modelo_scriptado.pt          <- modelo TorchScript (390 KB)
+│   ├── modelo_scriptado.pt  modelo TorchScript usado pela API
 │   ├── classes.json
-│   └── *.png                        <- curvas, matriz de confusão, erros
-├── logs/
-│   └── baixa_confianca.jsonl        <- exemplo de log gerado
-├── amostras/                        <- PNGs do Fashion-MNIST para teste
-├── evidencias/                      <- prints (docker ps healthy, página web)
-└── relatorio/                       <- relatório final (3 a 5 páginas)
+│   ├── historico.json       histórico de treino por época
+│   ├── metricas_teste.json  métricas por classe no teste
+│   └── *.png                curvas, matriz de confusão e erros
+├── logs/                    exemplo de log de baixa confiança
+└── amostras/                imagens do Fashion-MNIST para testar a API
 ```
-
-> **Nota:** o dataset (`data/`) e o checkpoint de treino (`melhor_modelo.pt`)
-> não são versionados: o dataset baixa automaticamente e o checkpoint é
-> reproduzível pela semente fixa (42). Apenas os artefatos de produção
-> (`modelo_scriptado.pt`, `classes.json`) estão no repositório, pois são
-> pequenos e necessários para o Docker.
-
-## Como reproduzir
-
-### Opção A — Pipeline completo no Google Colab (~25 min)
-
-1. Abra o notebook `CP1_AI___Deep_Learning_Caminho_C.ipynb` no
-   [Colab](https://colab.research.google.com) e execute as células em ordem.
-2. O notebook clona o repositório da disciplina, treina (12 épocas, ~16 min em
-   CPU), avalia, exporta o TorchScript, sobe a API estendida em background e
-   testa os quatro endpoints (`/saude`, `/prever`, `/prever_lote`,
-   `/metricas`), incluindo o cenário de baixa confiança.
-3. A última seção gera o `artefatos_caminho_c.zip` para download, que alimenta
-   a reprodução local com Docker.
-
-A semente fixa torna o treino reprodutível; os números podem variar
-ligeiramente por versão de biblioteca ou hardware.
-
-### Opção B — Somente o serviço, com Docker (local, ~10 min)
-
-Pré-requisito: [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-(no Windows, com WSL 2).
-
-```powershell
-# 1. Obter este repositório (git clone ou Code -> Download ZIP)
-git clone https://github.com/cynthiatakematu/CP1-AI-DEEP-LEARNING.git
-cd CP1-AI-DEEP-LEARNING
-
-# 2. Construir a imagem (o torch CPU baixa ~300 MB na primeira vez)
-docker build -t cnn-roupas-caminho-c -f deploy/Dockerfile .
-
-# 3. Subir o contêiner (o volume persiste o log de baixa confiança)
-docker run -p 8000:8000 -v "${PWD}/logs:/app/logs" -e DIR_LOGS=/app/logs cnn-roupas-caminho-c
-```
-
-Espere a mensagem `[startup] modelo carregado | 10 classes`. Depois:
-
-- **Navegador:** http://localhost:8000 (página de teste com upload múltiplo e
-  botão de métricas) e http://localhost:8000/docs (Swagger).
-- **Linha de comando** (em outro terminal, na pasta do repositório):
-
-```powershell
-curl.exe http://localhost:8000/saude
-curl.exe http://localhost:8000/metricas
-curl.exe -X POST http://localhost:8000/prever_lote `
-  -F "arquivos=@amostras/amostra_000_Ankle boot.png" `
-  -F "arquivos=@amostras/amostra_001_Pullover.png"
-
-docker ps        # STATUS deve mostrar "Up ... (healthy)" apos ~30 s
-type logs\baixa_confianca.jsonl
-```
-
-> Em Linux/macOS, troque `curl.exe` por `curl`, `type` por `cat` e
-> `"${PWD}"` por `"$(pwd)"`.
-
-### Dicas de teste
-
-- As imagens de `amostras/` já estão no domínio do modelo — use-as **sem** a
-  opção "inverter cores".
-- Fotos reais de roupa (fundo claro) exigem a opção **"inverter cores"** e,
-  mesmo assim, podem errar: o modelo só conhece 28×28 em escala de cinza com
-  peça clara sobre fundo escuro. Esse deslocamento de domínio é discutido na
-  seção 7 do relatório.
 
 ## Créditos
 
-- Material didático, pipeline de treino e API original: Prof. Dr. Alexandre
-  Miguel de Carvalho ([carvalhoamc/fiap](https://github.com/carvalhoamc/fiap)).
-- Extensões do Caminho C (endpoints de lote e métricas, log de baixa
-  confiança, ajustes de deploy): autoria do grupo.
-- Dataset: [Fashion-MNIST](https://github.com/zalandoresearch/fashion-mnist)
-  (Xiao, Rasul & Vollgraf, 2017).
+- Material didático, pipeline de treino e API original: Prof. Dr. Alexandre Miguel de Carvalho ([carvalhoamc/fiap](https://github.com/carvalhoamc/fiap)).
+- Extensões do Caminho C (lote, métricas, log de baixa confiança e deploy em Docker): **Bruno Tomin** e **Cynthia Takematu**.
+- Dataset: [Fashion-MNIST](https://github.com/zalandoresearch/fashion-mnist) (Xiao, Rasul & Vollgraf, 2017).
